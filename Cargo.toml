@@ -1,0 +1,14 @@
+[package]
+name = "test-l0-rs"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[build-dependencies]
+bindgen = "0.68.1"
+
+
+[dependencies]
+simple_logger = "4.0.0"
+log = "0.4.0"
