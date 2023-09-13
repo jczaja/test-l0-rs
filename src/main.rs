@@ -104,7 +104,126 @@ fn make_descriptive_error_codes() -> HashMap<_ze_result_t, &'static str> {
     error_codes
 }
 
-fn main() {
+fn make_descriptive_devices_types() -> HashMap<_ze_device_type_t, &'static str> {
+    let mut devices_types: HashMap<_ze_device_type_t, &str> = [
+        (1, "ZE_DEVICE_TYPE_GPU"),
+        (2, "ZE_DEVICE_TYPE_CPU"),
+        (3, "ZE_DEVICE_TYPE_FPGA"),
+        (4, "ZE_DEVICE_TYPE_MCA"),
+        (5, "ZE_DEVICE_TYPE_VPU"),
+        (2147483647, "ZE_DEVICE_TYPE_FORCE_UINT32"),
+    ]
+    .iter()
+    .cloned()
+    .collect();
+
+    devices_types
+}
+
+fn get_first_driver() -> Result<ze_driver_handle_t, &'static str> {
+    let error_msgs = make_descriptive_error_codes();
+    let mut result;
+    let mut pcount: u32 = 0;
+    let mut phdrivers: [ze_driver_handle_t; 10]; // problem above 10 drivers
+    unsafe {
+        phdrivers = mem::zeroed();
+        // Get number of drivers of Level zero
+        result = zeDriverGet(&mut pcount, phdrivers.as_mut_ptr());
+    }
+    log::info!("zeDriverGet: {}", error_msgs[&result]);
+    match (result, pcount) {
+        (_ze_result_t_ZE_RESULT_SUCCESS, 0) => return Err("No Level Zero drivers!"),
+        (_ze_result_t_ZE_RESULT_SUCCESS, _) => println!("Num Level Zero drivers {pcount}"),
+        (_, _) => return Err("Error: zeDriverGet failed!"),
+    }
+
+    // Get actual drivers
+    unsafe {
+        result = zeDriverGet(&mut pcount, phdrivers.as_mut_ptr());
+    }
+    log::info!("zeDriverGet: {}", error_msgs[&result]);
+    match result {
+        _ze_result_t_ZE_RESULT_SUCCESS => log::info!("Level Zero drivers {:?}", phdrivers),
+        _ => return Err("Error: zeDriverGet failed!"),
+    }
+    Ok(phdrivers[0])
+}
+
+fn get_first_device(driver: &ze_driver_handle_t) -> Result<ze_device_handle_t, &'static str> {
+    let error_msgs = make_descriptive_error_codes();
+    let mut num_devices = 0;
+    let mut phdevices: [ze_device_handle_t; 10];
+    let mut result;
+    unsafe {
+        phdevices = mem::zeroed();
+        result = zeDeviceGet(*driver, &mut num_devices, phdevices.as_mut_ptr());
+    }
+    log::info!("zeDeviceGet: {}", error_msgs[&result]);
+
+    match (result, num_devices) {
+        (_ze_result_t_ZE_RESULT_SUCCESS, 0) => return Err("No Level Zero devices!"),
+        (_ze_result_t_ZE_RESULT_SUCCESS, _) => println!("Num Level Zero devices {num_devices}"),
+        (_, _) => return Err("Error: zeDeviceGet failed!"),
+    }
+
+    unsafe {
+        result = zeDeviceGet(*driver, &mut num_devices, phdevices.as_mut_ptr());
+    }
+    log::info!("zeDeviceGet: {}", error_msgs[&result]);
+    match result {
+        _ze_result_t_ZE_RESULT_SUCCESS => log::info!("Level Zero devices {:?}", phdevices),
+        _ => return Err("Error: zeDeviceGet failed!"),
+    }
+
+    let mut pDeviceProperties: ze_device_properties_t;
+    unsafe {
+        pDeviceProperties = mem::zeroed();
+        result = zeDeviceGetProperties(phdevices[0], &mut pDeviceProperties);
+    }
+    log::info!("zeDeviceGetProperties: {}", error_msgs[&result]);
+
+    match result {
+        _ze_result_t_ZE_RESULT_SUCCESS => {
+            let device_types = make_descriptive_devices_types();
+
+            let iname = pDeviceProperties
+                .name
+                .iter()
+                .map(|&x| x as u8)
+                .collect::<Vec<u8>>();
+
+            println!(
+                "device name: {:?} ({})",
+                std::ffi::CStr::from_bytes_until_nul(&iname[..])
+                    .expect("Error converting Device Name"),
+                device_types[&pDeviceProperties.type_]
+            );
+            log::info!(
+                "    maxMemAllocSize[MiB]: {}",
+                pDeviceProperties.maxMemAllocSize / 1024 / 1024
+            );
+            log::info!("    numThreadsPerEU: {}", pDeviceProperties.numThreadsPerEU);
+            log::info!(
+                "    physicalEUSimdWidth: {}",
+                pDeviceProperties.physicalEUSimdWidth
+            );
+            log::info!(
+                "    numEUsPerSubslice: {}",
+                pDeviceProperties.numEUsPerSubslice
+            );
+            log::info!(
+                "    numSubslicesPerSlice: {}",
+                pDeviceProperties.numSubslicesPerSlice
+            );
+            log::info!("    numSlices: {}", pDeviceProperties.numSlices);
+        }
+        _ => return Err("Error: zeDeviceGetProperties failed!"),
+    }
+
+    Ok(phdevices[0])
+}
+
+fn main() -> Result<(), &'static str> {
     println!("Hello, Level-Zero world!");
 
     // Make a default logging level: error
@@ -126,16 +245,13 @@ fn main() {
         _ => panic!("Error: zeInit failed!"),
     }
 
-    let result;
-    let mut pcount: u32 = 0;
-    unsafe {
-        let mut phdrivers: ze_driver_handle_t = mem::zeroed();
-        result = zeDriverGet(&mut pcount, &mut phdrivers);
-    }
-    log::info!("zeDriverGet: {}", error_msgs[&result]);
+    let l0_driver = get_first_driver()?;
 
-    match result {
-        _ze_result_t_ZE_RESULT_SUCCESS => println!("Num Level Zero drivers {pcount}"),
-        _ => panic!("Error: zeDriverGet failed!"),
-    }
+    let l0_device = get_first_device(&l0_driver)?;
+
+    Ok(())
+
+    // TODO: make context
+    // TODO: make queues
+    // TODO: make command buffers
 }
