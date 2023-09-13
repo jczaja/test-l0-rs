@@ -220,6 +220,40 @@ fn get_first_device(driver: &ze_driver_handle_t) -> Result<ze_device_handle_t, &
         _ => return Err("Error: zeDeviceGetProperties failed!"),
     }
 
+    // get compute specific properties of device
+
+    let mut pComputeProperties: ze_device_compute_properties_t;
+    unsafe {
+        pComputeProperties = mem::zeroed();
+        result = zeDeviceGetComputeProperties(phdevices[0], &mut pComputeProperties);
+    }
+    log::info!("zeDeviceGetComputeProperties: {}", error_msgs[&result]);
+
+    match result {
+        _ze_result_t_ZE_RESULT_SUCCESS => {
+            log::info!(
+                "    maxTotalGroupSize: {}",
+                pComputeProperties.maxTotalGroupSize
+            );
+            log::info!("    maxGroupSizeX: {}", pComputeProperties.maxGroupSizeX);
+            log::info!("    maxGroupSizeY: {}", pComputeProperties.maxGroupSizeY);
+            log::info!("    maxGroupSizeZ: {}", pComputeProperties.maxGroupSizeZ);
+            log::info!("    maxGroupCountX: {}", pComputeProperties.maxGroupCountX);
+            log::info!("    maxGroupCountY: {}", pComputeProperties.maxGroupCountY);
+            log::info!("    maxGroupCountZ: {}", pComputeProperties.maxGroupCountZ);
+            log::info!(
+                "    maxSharedLocalMemory[KiB]: {}",
+                pComputeProperties.maxSharedLocalMemory / 1024
+            );
+            log::info!(
+                "    numSubGroupSizes: {}",
+                pComputeProperties.numSubGroupSizes
+            );
+            log::info!("    subGroupSizes: {:?}", pComputeProperties.subGroupSizes);
+        }
+        _ => return Err("Error: zeDeviceGetComputeProperties failed!"),
+    }
+
     Ok(phdevices[0])
 }
 
