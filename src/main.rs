@@ -257,6 +257,58 @@ fn get_first_device(driver: &ze_driver_handle_t) -> Result<ze_device_handle_t, &
     Ok(phdevices[0])
 }
 
+fn get_context(driver: &ze_driver_handle_t) -> Result<ze_context_handle_t, &'static str> {
+    let error_msgs = make_descriptive_error_codes();
+    let mut context: ze_context_handle_t;
+    let result;
+    unsafe {
+        context = mem::zeroed();
+        let mut contextDescription: ze_context_desc_t = mem::zeroed();
+        contextDescription.stype = _ze_structure_type_t_ZE_STRUCTURE_TYPE_CONTEXT_DESC;
+        result = zeContextCreate(*driver, &contextDescription, &mut context);
+    }
+
+    log::info!("zeContextCreate: {}", error_msgs[&result]);
+    match result {
+        _ze_result_t_ZE_RESULT_SUCCESS => log::info!("Level Zero context created"),
+        _ => return Err("Error: zeContextCreate failed!"),
+    }
+
+    Ok(context)
+}
+
+fn get_command_queue(device: &ze_device_handle_t) -> Result<(), &'static str> {
+    let error_msgs = make_descriptive_error_codes();
+    let mut result;
+    let mut count: u32 = 0;
+    unsafe {
+        let mut command_queue_group_properties: _ze_command_queue_group_properties_t =
+            mem::zeroed();
+        result = zeDeviceGetCommandQueueGroupProperties(
+            *device,
+            &mut count,
+            &mut command_queue_group_properties,
+        );
+    }
+    log::info!(
+        "zeDeviceGetCommandQueueGroupProperties: {}",
+        error_msgs[&result]
+    );
+
+    match (result, count) {
+        (_ze_result_t_ZE_RESULT_SUCCESS, 0) => return Err("No Level Zero command queue groups!"),
+        (_ze_result_t_ZE_RESULT_SUCCESS, _) => println!("Num Level Zero drivers {count}"),
+        (_, _) => return Err("Error: zeDeviceGetCommandQueueGroupProperties failed!"),
+    }
+
+    unsafe {
+        let queue_properties: Vec<ze_command_queue_group_properties_t> =
+            vec![mem::zeroed(); count as usize];
+    }
+    // Implementing Vec of command group properties
+    todo!();
+}
+
 fn main() -> Result<(), &'static str> {
     println!("Hello, Level-Zero world!");
 
@@ -283,9 +335,10 @@ fn main() -> Result<(), &'static str> {
 
     let l0_device = get_first_device(&l0_driver)?;
 
+    let context = get_context(&l0_driver)?;
+
     Ok(())
 
-    // TODO: make context
     // TODO: make queues
     // TODO: make command buffers
 }
