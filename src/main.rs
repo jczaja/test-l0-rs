@@ -277,17 +277,21 @@ fn get_context(driver: &ze_driver_handle_t) -> Result<ze_context_handle_t, &'sta
     Ok(context)
 }
 
-fn get_command_queue(device: &ze_device_handle_t) -> Result<(), &'static str> {
+fn get_command_queue(
+    device: &ze_device_handle_t,
+    context: &ze_context_handle_t,
+) -> Result<(ze_command_queue_handle_t, ze_command_list_handle_t), &'static str> {
     let error_msgs = make_descriptive_error_codes();
     let mut result;
     let mut count: u32 = 0;
+    let mut command_queue_group_properties: Vec<ze_command_queue_group_properties_t>;
     unsafe {
-        let mut command_queue_group_properties: _ze_command_queue_group_properties_t =
-            mem::zeroed();
+        command_queue_group_properties = vec![];
+
         result = zeDeviceGetCommandQueueGroupProperties(
             *device,
             &mut count,
-            &mut command_queue_group_properties,
+            command_queue_group_properties.as_mut_ptr(),
         );
     }
     log::info!(
@@ -297,16 +301,74 @@ fn get_command_queue(device: &ze_device_handle_t) -> Result<(), &'static str> {
 
     match (result, count) {
         (_ze_result_t_ZE_RESULT_SUCCESS, 0) => return Err("No Level Zero command queue groups!"),
-        (_ze_result_t_ZE_RESULT_SUCCESS, _) => println!("Num Level Zero drivers {count}"),
+        (_ze_result_t_ZE_RESULT_SUCCESS, _) => {
+            log::info!("Num Level Zero command queue groups {count}")
+        }
         (_, _) => return Err("Error: zeDeviceGetCommandQueueGroupProperties failed!"),
     }
 
     unsafe {
-        let queue_properties: Vec<ze_command_queue_group_properties_t> =
-            vec![mem::zeroed(); count as usize];
+        command_queue_group_properties = vec![mem::zeroed(); count as usize];
+        result = zeDeviceGetCommandQueueGroupProperties(
+            *device,
+            &mut count,
+            command_queue_group_properties.as_mut_ptr(),
+        );
     }
-    // Implementing Vec of command group properties
-    todo!();
+
+    log::info!(
+        "zeDeviceGetCommandQueueGroupProperties: {}",
+        error_msgs[&result]
+    );
+
+    if result != _ze_result_t_ZE_RESULT_SUCCESS {
+        return Err("Error: zeDeviceGetCommandQueueGroupProperties failed!");
+    }
+
+    let mut cmdQueueDesc: ze_command_queue_desc_t;
+    unsafe {
+        cmdQueueDesc = mem::zeroed();
+    }
+    for i in 0..count {
+        if command_queue_group_properties[i as usize].flags
+            & _ze_command_queue_group_property_flag_t_ZE_COMMAND_QUEUE_GROUP_PROPERTY_FLAG_COMPUTE
+            != 0
+        {
+            cmdQueueDesc.ordinal = i;
+            break;
+        }
+    }
+
+    cmdQueueDesc.index = 0;
+    cmdQueueDesc.mode = _ze_command_queue_mode_t_ZE_COMMAND_QUEUE_MODE_ASYNCHRONOUS;
+    let mut cmdQueue: ze_command_queue_handle_t;
+    unsafe {
+        cmdQueue = mem::zeroed();
+        result = zeCommandQueueCreate(*context, *device, &cmdQueueDesc, &mut cmdQueue);
+    }
+
+    log::info!("zeCommandQueueCreate: {}", error_msgs[&result]);
+
+    match result {
+        _ze_result_t_ZE_RESULT_SUCCESS => log::info!("Level Zero command queue created"),
+        _ => return Err("Error: zeCommandQueueCreate failed!"),
+    }
+
+    // Create a command list
+    let mut cmdList: ze_command_list_handle_t;
+    unsafe {
+        cmdList = mem::zeroed();
+        let mut cmdListDesc: ze_command_list_desc_t = mem::zeroed();
+        cmdListDesc.commandQueueGroupOrdinal = cmdQueueDesc.ordinal;
+        result = zeCommandListCreate(*context, *device, &cmdListDesc, &mut cmdList);
+    }
+
+    log::info!("zeCommandListCreate: {}", error_msgs[&result]);
+
+    match result {
+        _ze_result_t_ZE_RESULT_SUCCESS => Ok((cmdQueue, cmdList)),
+        _ => return Err("Error: zeCommandListCreate failed!"),
+    }
 }
 
 fn main() -> Result<(), &'static str> {
@@ -337,8 +399,10 @@ fn main() -> Result<(), &'static str> {
 
     let context = get_context(&l0_driver)?;
 
+    let (queue, qlist) = get_command_queue(&l0_device, &context)?;
     Ok(())
 
-    // TODO: make queues
-    // TODO: make command buffers
+    // TODO: make buffers
+    // TODO: load spirv
+    // TODO: dispatch
 }
