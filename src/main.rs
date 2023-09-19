@@ -371,6 +371,43 @@ fn get_command_queue(
     }
 }
 
+fn get_shared_buffer(
+    context: &ze_context_handle_t,
+    device: &ze_device_handle_t,
+    allocsize: usize,
+) -> Result<*mut ::std::os::raw::c_void, &'static str> {
+    let error_msgs = make_descriptive_error_codes();
+    let mut device_mem_desc: ze_device_mem_alloc_desc_t;
+    let mut host_mem_desc: ze_host_mem_alloc_desc_t;
+    let mut pptr: *mut ::std::os::raw::c_void;
+    let result;
+    unsafe {
+        pptr = std::ptr::null_mut();
+        device_mem_desc = mem::zeroed();
+        device_mem_desc.flags = _ze_device_mem_alloc_flag_t_ZE_DEVICE_MEM_ALLOC_FLAG_BIAS_CACHED;
+        device_mem_desc.ordinal = 0;
+        host_mem_desc = mem::zeroed();
+        host_mem_desc.flags = _ze_host_mem_alloc_flag_t_ZE_HOST_MEM_ALLOC_FLAG_BIAS_CACHED;
+
+        result = zeMemAllocShared(
+            *context,
+            &device_mem_desc,
+            &host_mem_desc,
+            allocsize,
+            1,
+            *device,
+            &mut pptr,
+        );
+    }
+
+    log::info!("zeMemAllocShared: {}", error_msgs[&result]);
+
+    match result {
+        _ze_result_t_ZE_RESULT_SUCCESS => Ok(pptr),
+        _ => return Err("Error: zeMemAllocShared failed!"),
+    }
+}
+
 fn main() -> Result<(), &'static str> {
     println!("Hello, Level-Zero world!");
 
@@ -400,9 +437,15 @@ fn main() -> Result<(), &'static str> {
     let context = get_context(&l0_driver)?;
 
     let (queue, qlist) = get_command_queue(&l0_device, &context)?;
+
+    let matrix_n_dim: usize = 1024;
+
+    let A_matrix = get_shared_buffer(&context, &l0_device, matrix_n_dim * matrix_n_dim * 4)?;
+    let B_matrix = get_shared_buffer(&context, &l0_device, matrix_n_dim * matrix_n_dim * 4)?;
+    let C_matrix = get_shared_buffer(&context, &l0_device, matrix_n_dim * matrix_n_dim * 4)?;
+
     Ok(())
 
-    // TODO: make buffers
     // TODO: load spirv
     // TODO: dispatch
 }

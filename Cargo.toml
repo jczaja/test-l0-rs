@@ -5,9 +5,18 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+# Compile build-dependencies in release mode with
+# the same settings as regular dependencies.
+[profile.release.build-override]
+opt-level = 3
+codegen-units = 16
+
+[profile.dev.build-override]
+opt-level = 3
+
 [build-dependencies]
 bindgen = "0.68.1"
-
+spirv-builder = "0.9.0"
 
 [dependencies]
 simple_logger = "4.0.0"

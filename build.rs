@@ -1,3 +1,4 @@
+use spirv_builder::{MetadataPrintout, SpirvBuilder, SpirvMetadata};
 use std::env;
 use std::path::PathBuf;
 
@@ -16,4 +17,11 @@ fn main() {
     bindings
         .write_to_file(out_path.join("bindings.rs"))
         .expect("Couldn't write Level Zero bindings");
+
+    // Build shader
+    SpirvBuilder::new("shader", "spirv-unknown-spv1.5")
+        .spirv_metadata(SpirvMetadata::NameVariables)
+        .print_metadata(MetadataPrintout::Full)
+        .build()
+        .expect("Could not build shader");
 }
