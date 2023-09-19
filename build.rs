@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 fn main() {
     println!("cargo:rustc-link-search=/usr/lib64");
+    println!("cargo:rustc-link-search=/usr/lib");
     println!("cargo:rustc-link-lib=ze_loader");
     println!("cargo:rerun-if-changed=cpp/l0_wrapper.h");
 
