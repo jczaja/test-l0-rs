@@ -3,7 +3,9 @@
 #![allow(non_snake_case)]
 
 use std::collections::HashMap;
+use std::ffi::CString;
 use std::mem;
+
 // TODO: read tutorial and make more calls for educational purposes
 // TODO: Some basic kernel should be read loaded and executed
 
@@ -408,6 +410,88 @@ fn get_shared_buffer(
     }
 }
 
+fn get_shader(
+    context: &ze_context_handle_t,
+    device: &ze_device_handle_t,
+) -> Result<ze_kernel_handle_t, &'static str> {
+    let error_msgs = make_descriptive_error_codes();
+    const COMPUTE_SHADER: &[u8] = include_bytes!(env!("shader.spv"));
+
+    let mut moduleDesc: ze_module_desc_t;
+    unsafe {
+        moduleDesc = mem::zeroed();
+    }
+    moduleDesc.format = _ze_module_format_t_ZE_MODULE_FORMAT_IL_SPIRV;
+    moduleDesc.pInputModule = COMPUTE_SHADER.as_ptr();
+    moduleDesc.inputSize = COMPUTE_SHADER.len();
+    let empty_string = CString::new("").expect("Empty string to c_char error");
+    moduleDesc.pBuildFlags = empty_string.as_ptr();
+
+    let mut buildLog: ze_module_build_log_handle_t;
+    let mut module: ze_module_handle_t;
+    let mut result;
+    unsafe {
+        buildLog = mem::zeroed();
+        module = mem::zeroed();
+        result = zeModuleCreate(*context, *device, &moduleDesc, &mut module, &mut buildLog);
+    }
+
+    log::info!("zeModuleCreate: {}", error_msgs[&result]);
+
+    match result {
+        _ze_result_t_ZE_RESULT_SUCCESS => {
+            log::info!("zeModuleCreate success!")
+        }
+        _ => {
+            let mut szLog: usize = 0;
+            let mut result;
+            unsafe {
+                result = zeModuleBuildLogGetString(buildLog, &mut szLog, std::ptr::null_mut());
+                log::info!("zeModuleBuildLogGetString: {}", error_msgs[&result]);
+                match result {
+                    _ze_result_t_ZE_RESULT_SUCCESS => {
+                        log::info!("zeModuleBuildLogGetString log size: {szLog}")
+                    }
+                    _ => return Err("Error: zeModuleBuildLogGetString failed!"),
+                }
+
+                let strLog = CString::from_vec_unchecked(vec![0; szLog]).into_raw();
+                result = zeModuleBuildLogGetString(buildLog, &mut szLog, strLog);
+                log::info!("zeModuleBuildLogGetString: {}", error_msgs[&result]);
+
+                match result {
+                    _ze_result_t_ZE_RESULT_SUCCESS => {
+                        log::info!("Build Log: {:?}", strLog)
+                    }
+                    _ => return Err("Error: zeModuleBuildLogGetString failed!"),
+                }
+            }
+            return Err("Error: zeModuleCreate failed!");
+        }
+    };
+
+    // Kernel creation (out of module)
+
+    let mut kernelDesc: ze_kernel_desc_t;
+    let mut kernel: ze_kernel_handle_t;
+    unsafe {
+        kernelDesc = mem::zeroed();
+        kernel = mem::zeroed();
+    }
+    kernelDesc.pKernelName = CString::new("main_cs")
+        .expect("Empty string to c_char error")
+        .into_raw(); // Name of the Kernel.
+    unsafe {
+        result = zeKernelCreate(module, &kernelDesc, &mut kernel);
+    }
+    log::info!("zeKernelCreate: {}", error_msgs[&result]);
+
+    match result {
+        _ze_result_t_ZE_RESULT_SUCCESS => Ok(kernel),
+        _ => return Err("Error: zeKernelCreate failed!"),
+    }
+}
+
 fn main() -> Result<(), &'static str> {
     println!("Hello, Level-Zero world!");
 
@@ -444,8 +528,11 @@ fn main() -> Result<(), &'static str> {
     let B_matrix = get_shared_buffer(&context, &l0_device, matrix_n_dim * matrix_n_dim * 4)?;
     let C_matrix = get_shared_buffer(&context, &l0_device, matrix_n_dim * matrix_n_dim * 4)?;
 
+    let kernel = get_shader(&context, &l0_device)?;
+
     Ok(())
 
+    // TODO: make CI
     // TODO: load spirv
     // TODO: dispatch
 }
