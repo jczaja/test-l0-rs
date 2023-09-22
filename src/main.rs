@@ -492,6 +492,42 @@ fn get_shader(
     }
 }
 
+fn dispatch_kernel(qlist: &ze_command_list_handle_t,kernel : &ze_kernel_handle_t) -> Result<(),&'static str>
+{
+    let error_msgs = make_descriptive_error_codes();
+
+    let globalSizeX: u32 = 32;
+    let globalSizeY: u32 = 32;
+    let globalSizeZ: u32 = 1;
+    let mut groupSizeX: u32 = 0;
+    let mut groupSizeY: u32 = 0;
+    let mut groupSizeZ: u32 = 0;
+    let mut result; 
+    unsafe {
+        result = zeKernelSuggestGroupSize(*kernel , globalSizeX, globalSizeY, globalSizeZ, &mut groupSizeX, &mut groupSizeY, &mut groupSizeZ);
+    }
+    log::info!("zeKernelSuggestGroupSize: {}", error_msgs[&result]);
+
+    match result {
+        _ze_result_t_ZE_RESULT_SUCCESS => log::info!("Level Zero zeKernelSuggestGroupSize : [{groupSizeX},{groupSizeY},{groupSizeZ}]"),
+        _ => return Err("Error: zeKernelSuggestGroupSize failed!"),
+    }
+
+    unsafe {
+        result = zeKernelSetGroupSize(*kernel, groupSizeX, groupSizeY, groupSizeZ);
+    }
+
+    log::info!("zeKernelSetGroupSize: {}", error_msgs[&result]);
+
+    match result {
+        _ze_result_t_ZE_RESULT_SUCCESS => log::info!("Level Zero zeKernelSetGroupSize successful!"),
+        _ => return Err("Error: zeKernelSetGroupSize failed!"),
+    }
+
+    todo!();
+}
+
+
 fn main() -> Result<(), &'static str> {
     println!("Hello, Level-Zero world!");
 
@@ -530,6 +566,7 @@ fn main() -> Result<(), &'static str> {
 
     let kernel = get_shader(&context, &l0_device)?;
 
+    dispatch_kernel(&qlist,&kernel)?;
     Ok(())
 
     // TODO: make CI
