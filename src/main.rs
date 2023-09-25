@@ -492,8 +492,43 @@ fn get_shader(
     }
 }
 
-fn dispatch_kernel(qlist: &ze_command_list_handle_t,kernel : &ze_kernel_handle_t) -> Result<(),&'static str>
-{
+enum AnyPointer {
+    C(*const ::std::os::raw::c_void),
+    M(*mut ::std::os::raw::c_void),
+}
+
+fn set_kernel_args(
+    kernel: &mut ze_kernel_handle_t,
+    mats_size: usize,
+    mat: &AnyPointer,
+) -> Result<(), &'static str> {
+    let error_msgs = make_descriptive_error_codes();
+    let result;
+    unsafe {
+        result = match *mat {
+            AnyPointer::C(val) => zeKernelSetArgumentValue(*kernel, 0, mats_size, val),
+            AnyPointer::M(val) => zeKernelSetArgumentValue(*kernel, 0, mats_size, val),
+        }
+    }
+    log::info!("zeKernelSetArgumentValue: {}", error_msgs[&result]);
+
+    match result {
+        _ze_result_t_ZE_RESULT_SUCCESS => {
+            log::info!("Level Zero zeKernelSetArgumentValue successful!");
+            Ok(())
+        }
+        _ => Err("Error: zeKernelSetGroupSize failed!"),
+    }
+}
+
+fn dispatch_kernel(
+    qlist: &mut ze_command_list_handle_t,
+    kernel: &mut ze_kernel_handle_t,
+    dst_mat: &*mut ::std::os::raw::c_void,
+    src1_mat: &*mut ::std::os::raw::c_void,
+    src2_mat: &*mut ::std::os::raw::c_void,
+    mats_size: usize,
+) -> Result<(), &'static str> {
     let error_msgs = make_descriptive_error_codes();
 
     let globalSizeX: u32 = 32;
@@ -502,14 +537,24 @@ fn dispatch_kernel(qlist: &ze_command_list_handle_t,kernel : &ze_kernel_handle_t
     let mut groupSizeX: u32 = 0;
     let mut groupSizeY: u32 = 0;
     let mut groupSizeZ: u32 = 0;
-    let mut result; 
+    let mut result;
     unsafe {
-        result = zeKernelSuggestGroupSize(*kernel , globalSizeX, globalSizeY, globalSizeZ, &mut groupSizeX, &mut groupSizeY, &mut groupSizeZ);
+        result = zeKernelSuggestGroupSize(
+            *kernel,
+            globalSizeX,
+            globalSizeY,
+            globalSizeZ,
+            &mut groupSizeX,
+            &mut groupSizeY,
+            &mut groupSizeZ,
+        );
     }
     log::info!("zeKernelSuggestGroupSize: {}", error_msgs[&result]);
 
     match result {
-        _ze_result_t_ZE_RESULT_SUCCESS => log::info!("Level Zero zeKernelSuggestGroupSize : [{groupSizeX},{groupSizeY},{groupSizeZ}]"),
+        _ze_result_t_ZE_RESULT_SUCCESS => log::info!(
+            "Level Zero zeKernelSuggestGroupSize : [{groupSizeX},{groupSizeY},{groupSizeZ}]"
+        ),
         _ => return Err("Error: zeKernelSuggestGroupSize failed!"),
     }
 
@@ -524,9 +569,40 @@ fn dispatch_kernel(qlist: &ze_command_list_handle_t,kernel : &ze_kernel_handle_t
         _ => return Err("Error: zeKernelSetGroupSize failed!"),
     }
 
-    todo!();
-}
+    set_kernel_args(kernel, mats_size, &AnyPointer::C(*src1_mat))?;
+    set_kernel_args(kernel, mats_size, &AnyPointer::C(*src2_mat))?;
+    set_kernel_args(kernel, mats_size, &AnyPointer::C(*dst_mat))?;
 
+    let dispatch = ze_group_count_t {
+        groupCountX: groupSizeX,
+        groupCountY: groupSizeY,
+        groupCountZ: groupSizeZ,
+    };
+    unsafe {
+        result = zeCommandListAppendLaunchKernel(
+            *qlist,
+            *kernel,
+            &dispatch,
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null_mut(),
+        );
+    }
+    log::info!("zeCommandListAppendLaunchKernel: {}", error_msgs[&result]);
+    match result {
+        _ze_result_t_ZE_RESULT_SUCCESS => {
+            log::info!("Level Zero zeCommandListAppendLaunchKernel successful!")
+        }
+        _ => return Err("Error: zeCommandListAppendLaunchKernel failed!"),
+    }
+
+    todo!();
+
+    //zeCommandListClose(cmdList));
+
+    //zeCommandQueueExecuteCommandLists(cmdQueue, 1, &cmdList, nullptr);
+    //zeCommandQueueSynchronize(cmdQueue, std::numeric_limits<uint64_t>::max());
+}
 
 fn main() -> Result<(), &'static str> {
     println!("Hello, Level-Zero world!");
@@ -556,17 +632,25 @@ fn main() -> Result<(), &'static str> {
 
     let context = get_context(&l0_driver)?;
 
-    let (queue, qlist) = get_command_queue(&l0_device, &context)?;
+    let (queue, mut qlist) = get_command_queue(&l0_device, &context)?;
 
     let matrix_n_dim: usize = 1024;
+    let matrix_size = matrix_n_dim * matrix_n_dim * 4;
 
-    let A_matrix = get_shared_buffer(&context, &l0_device, matrix_n_dim * matrix_n_dim * 4)?;
-    let B_matrix = get_shared_buffer(&context, &l0_device, matrix_n_dim * matrix_n_dim * 4)?;
-    let C_matrix = get_shared_buffer(&context, &l0_device, matrix_n_dim * matrix_n_dim * 4)?;
+    let A_matrix = get_shared_buffer(&context, &l0_device, matrix_size)?;
+    let B_matrix = get_shared_buffer(&context, &l0_device, matrix_size)?;
+    let C_matrix = get_shared_buffer(&context, &l0_device, matrix_size)?;
 
-    let kernel = get_shader(&context, &l0_device)?;
+    let mut kernel = get_shader(&context, &l0_device)?;
 
-    dispatch_kernel(&qlist,&kernel)?;
+    dispatch_kernel(
+        &mut qlist,
+        &mut kernel,
+        &C_matrix,
+        &A_matrix,
+        &B_matrix,
+        matrix_size,
+    )?;
     Ok(())
 
     // TODO: make CI
