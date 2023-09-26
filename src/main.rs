@@ -6,8 +6,8 @@ use std::collections::HashMap;
 use std::ffi::CString;
 use std::mem;
 
-// TODO: make CI
 // TODO: load spirv
+// TODO: make CI
 // TODO: read tutorial and make more calls for educational purposes
 // TODO: Some basic kernel should be read loaded and executed
 
