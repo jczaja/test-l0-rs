@@ -6,6 +6,8 @@ use std::collections::HashMap;
 use std::ffi::CString;
 use std::mem;
 
+// TODO: make CI
+// TODO: load spirv
 // TODO: read tutorial and make more calls for educational purposes
 // TODO: Some basic kernel should be read loaded and executed
 
@@ -522,6 +524,7 @@ fn set_kernel_args(
 }
 
 fn dispatch_kernel(
+    queue: &ze_command_queue_handle_t,
     qlist: &mut ze_command_list_handle_t,
     kernel: &mut ze_kernel_handle_t,
     dst_mat: &*mut ::std::os::raw::c_void,
@@ -596,12 +599,28 @@ fn dispatch_kernel(
         _ => return Err("Error: zeCommandListAppendLaunchKernel failed!"),
     }
 
-    todo!();
+    unsafe {
+        result = zeCommandListClose(*qlist);
+    }
+    log::info!("zeCommandListClose: {}", error_msgs[&result]);
+    match result {
+        _ze_result_t_ZE_RESULT_SUCCESS => {
+            log::info!("Level Zero zeCommandListClose successful!")
+        }
+        _ => return Err("Error: zeCommandListClose failed!"),
+    }
 
-    //zeCommandListClose(cmdList));
-
-    //zeCommandQueueExecuteCommandLists(cmdQueue, 1, &cmdList, nullptr);
-    //zeCommandQueueSynchronize(cmdQueue, std::numeric_limits<uint64_t>::max());
+    unsafe {
+        result = zeCommandQueueExecuteCommandLists(*queue, 1, qlist, std::ptr::null_mut());
+    }
+    log::info!("zeCommandQueueExecuteCommandLists: {}", error_msgs[&result]);
+    match result {
+        _ze_result_t_ZE_RESULT_SUCCESS => {
+            log::info!("Level Zero zeCommandQueueExecuteCommandLists successful!")
+        }
+        _ => return Err("Error: zeCommandQueueExecuteCommandLists failed!"),
+    }
+    Ok(())
 }
 
 fn main() -> Result<(), &'static str> {
@@ -615,7 +634,7 @@ fn main() -> Result<(), &'static str> {
 
     let error_msgs = make_descriptive_error_codes();
 
-    let result;
+    let mut result;
     unsafe {
         result = zeInit(_ze_init_flag_t_ZE_INIT_FLAG_GPU_ONLY);
     }
@@ -644,6 +663,7 @@ fn main() -> Result<(), &'static str> {
     let mut kernel = get_shader(&context, &l0_device)?;
 
     dispatch_kernel(
+        &queue,
         &mut qlist,
         &mut kernel,
         &C_matrix,
@@ -651,9 +671,18 @@ fn main() -> Result<(), &'static str> {
         &B_matrix,
         matrix_size,
     )?;
-    Ok(())
 
-    // TODO: make CI
-    // TODO: load spirv
-    // TODO: dispatch
+    //(cmdQueue, std::numeric_limits<uint64_t>::max());
+
+    unsafe {
+        result = zeCommandQueueSynchronize(queue, u64::MAX);
+    }
+    log::info!("zeCommandQueueSynchronize: {}", error_msgs[&result]);
+    match result {
+        _ze_result_t_ZE_RESULT_SUCCESS => {
+            log::info!("Level Zero zeCommandQueueSynchronize successful!")
+        }
+        _ => return Err("Error: zeCommandQueueSynchronize failed!"),
+    }
+    Ok(())
 }
