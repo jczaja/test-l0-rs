@@ -6,12 +6,10 @@ use std::collections::HashMap;
 use std::ffi::CString;
 use std::mem;
 
-// TODO: load spirv
 // TODO: Verify results using some Matrix multiplication CPU crate
 // TODO: https://github.com/EmbarkStudios/rust-gpu/issues/550  (target _feature to test)
 // TODO: make CI
 // TODO: read tutorial and make more calls for educational purposes
-// TODO: Some basic kernel should be read loaded and executed
 
 include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 
