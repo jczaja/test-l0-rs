@@ -376,6 +376,10 @@ fn get_command_queue(
     }
 }
 
+fn fill_data(mat: &*mut ::std::os::raw::c_void, num_elements: usize) -> Result<(), &'static str> {
+    Ok(())
+}
+
 fn get_shared_buffer(
     context: &ze_context_handle_t,
     device: &ze_device_handle_t,
@@ -389,10 +393,9 @@ fn get_shared_buffer(
     unsafe {
         pptr = std::ptr::null_mut();
         device_mem_desc = mem::zeroed();
-        device_mem_desc.flags = _ze_device_mem_alloc_flag_t_ZE_DEVICE_MEM_ALLOC_FLAG_BIAS_UNCACHED;
-        device_mem_desc.ordinal = 0;
+        device_mem_desc.stype = _ze_structure_type_t_ZE_STRUCTURE_TYPE_DEVICE_MEM_ALLOC_DESC;
         host_mem_desc = mem::zeroed();
-        host_mem_desc.flags = _ze_host_mem_alloc_flag_t_ZE_HOST_MEM_ALLOC_FLAG_BIAS_UNCACHED;
+        host_mem_desc.stype = _ze_structure_type_t_ZE_STRUCTURE_TYPE_HOST_MEM_ALLOC_DESC;
 
         result = zeMemAllocShared(
             *context,
@@ -508,6 +511,7 @@ enum AnyPointer {
 
 fn set_kernel_args(
     kernel: &mut ze_kernel_handle_t,
+    arg_index: u32,
     mats_size: usize,
     mat: &AnyPointer,
 ) -> Result<(), &'static str> {
@@ -515,8 +519,8 @@ fn set_kernel_args(
     let result;
     unsafe {
         result = match *mat {
-            AnyPointer::C(val) => zeKernelSetArgumentValue(*kernel, 0, mats_size, val),
-            AnyPointer::M(val) => zeKernelSetArgumentValue(*kernel, 0, mats_size, val),
+            AnyPointer::C(val) => zeKernelSetArgumentValue(*kernel, arg_index, mats_size, val),
+            AnyPointer::M(val) => zeKernelSetArgumentValue(*kernel, arg_index, mats_size, val),
         }
     }
     log::info!("zeKernelSetArgumentValue: {}", error_msgs[&result]);
@@ -579,9 +583,22 @@ fn dispatch_kernel(
         _ => return Err("Error: zeKernelSetGroupSize failed!"),
     }
 
-    set_kernel_args(kernel, mats_size, &AnyPointer::C(*src1_mat))?;
-    set_kernel_args(kernel, mats_size, &AnyPointer::C(*src2_mat))?;
-    set_kernel_args(kernel, mats_size, &AnyPointer::C(*dst_mat))?;
+    let src1_ptr = src1_mat as *const _ as *mut libc::c_void;
+    set_kernel_args(kernel, 0, mats_size, &AnyPointer::C(src1_ptr))?;
+    let src2_ptr = src2_mat as *const _ as *mut libc::c_void;
+    set_kernel_args(kernel, 1, mats_size, &AnyPointer::C(src2_ptr))?;
+    let dst_ptr = dst_mat as *const _ as *mut libc::c_void;
+    set_kernel_args(kernel, 2, mats_size, &AnyPointer::C(dst_ptr))?;
+
+    let dim: i32 = mats_size as i32 / 4;
+
+    let dim_ptr = &dim as *const _ as *mut libc::c_void;
+    set_kernel_args(
+        kernel,
+        3,
+        std::mem::size_of::<i32>(),
+        &AnyPointer::C(dim_ptr),
+    )?;
 
     let dispatch = ze_group_count_t {
         groupCountX: groupSizeX,
@@ -729,12 +746,14 @@ fn main() -> Result<(), &'static str> {
 
     let (queue, mut qlist) = get_command_queue(&l0_device, &context)?;
 
-    let matrix_n_dim: usize = 1024;
+    let matrix_n_dim: usize = 100;
     let matrix_size = matrix_n_dim * matrix_n_dim * 4;
 
     let A_matrix = get_shared_buffer(&context, &l0_device, matrix_size)?;
     let B_matrix = get_shared_buffer(&context, &l0_device, matrix_size)?;
     let C_matrix = get_shared_buffer(&context, &l0_device, matrix_size)?;
+
+    fill_data(&A_matrix, matrix_n_dim)?;
 
     let mut kernel = get_shader(&context, &l0_device)?;
 

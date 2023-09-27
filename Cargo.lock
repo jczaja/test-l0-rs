@@ -730,6 +730,7 @@ name = "test-l0-rs"
 version = "0.1.0"
 dependencies = [
  "bindgen",
+ "libc",
  "log",
  "simple_logger",
  "spirv-builder",
