@@ -7,6 +7,7 @@ use std::ffi::CString;
 use std::mem;
 
 // TODO: load spirv
+// TODO: Verify results using some Matrix multiplication CPU crate
 // TODO: https://github.com/EmbarkStudios/rust-gpu/issues/550  (target _feature to test)
 // TODO: make CI
 // TODO: read tutorial and make more calls for educational purposes
@@ -377,6 +378,8 @@ fn get_command_queue(
 }
 
 fn fill_data(mat: &*mut ::std::os::raw::c_void, num_elements: usize) -> Result<(), &'static str> {
+    // TODO:
+    todo!();
     Ok(())
 }
 
@@ -416,7 +419,7 @@ fn get_shared_buffer(
     }
 }
 
-fn get_shader(
+fn get_kernel(
     context: &ze_context_handle_t,
     device: &ze_device_handle_t,
 ) -> Result<ze_kernel_handle_t, &'static str> {
@@ -424,10 +427,8 @@ fn get_shader(
     //TODO: Enable when shader compilation to Kernel works
     // const COMPUTE_SHADER: &[u8] = include_bytes!(env!("shader.spv"));
 
-    // TODO: proper path not hardocded
-    //const COMPUTE_SHADER: &[u8] = include_bytes!(env!("shader.spv"));
     const COMPUTE_SHADER: &[u8] =
-        include_bytes!("/home/jczaja/test-l0-rs/shader/matrixMultiply.spv");
+        include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/matrixMultiply.spv"));
 
     let mut moduleDesc: ze_module_desc_t;
     unsafe {
@@ -499,9 +500,50 @@ fn get_shader(
     log::info!("zeKernelCreate: {}", error_msgs[&result]);
 
     match result {
-        _ze_result_t_ZE_RESULT_SUCCESS => Ok(kernel),
+        _ze_result_t_ZE_RESULT_SUCCESS => log::info!("zeKErnelCreate succeeded!"),
         _ => return Err("Error: zeKernelCreate failed!"),
     }
+
+    // quering kernel properties
+    let mut kernelProperties: ze_kernel_properties_t;
+    unsafe {
+        kernelProperties = mem::zeroed();
+        result = zeKernelGetProperties(kernel, &mut kernelProperties);
+    }
+    match result {
+        _ze_result_t_ZE_RESULT_SUCCESS => {
+            log::info!("Kernel properties:");
+            log::info!("  numKernelArgs: {}", kernelProperties.numKernelArgs);
+            log::info!(
+                "  requiredGroupSizeX: {}",
+                kernelProperties.requiredGroupSizeX
+            );
+            log::info!(
+                "  requiredGroupSizeY: {}",
+                kernelProperties.requiredGroupSizeY
+            );
+            log::info!(
+                "  requiredGroupSizeZ: {}",
+                kernelProperties.requiredGroupSizeZ
+            );
+            log::info!(
+                "  requiredNumSubgroups: {}",
+                kernelProperties.requiredNumSubGroups
+            );
+            log::info!(
+                "  requiredSubgroupSize: {}",
+                kernelProperties.requiredSubgroupSize
+            );
+            log::info!("  maxSubgroupSize: {}", kernelProperties.maxSubgroupSize);
+            log::info!("  maxNumSubgroups: {}", kernelProperties.maxNumSubgroups);
+            log::info!("  localMemSize: {}", kernelProperties.localMemSize);
+            log::info!("  privateMemSize: {}", kernelProperties.privateMemSize);
+            log::info!("  spillMemSize: {}", kernelProperties.spillMemSize);
+        }
+        _ => return Err("Error: zeKernelGetProperties failed!"),
+    }
+
+    Ok(kernel)
 }
 
 enum AnyPointer {
@@ -753,9 +795,9 @@ fn main() -> Result<(), &'static str> {
     let B_matrix = get_shared_buffer(&context, &l0_device, matrix_size)?;
     let C_matrix = get_shared_buffer(&context, &l0_device, matrix_size)?;
 
-    fill_data(&A_matrix, matrix_n_dim)?;
+    //    fill_data(&A_matrix, matrix_n_dim)?;
 
-    let mut kernel = get_shader(&context, &l0_device)?;
+    let mut kernel = get_kernel(&context, &l0_device)?;
 
     dispatch_kernel(
         &queue,
