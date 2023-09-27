@@ -7,6 +7,7 @@ use std::ffi::CString;
 use std::mem;
 
 // TODO: load spirv
+// TODO: https://github.com/EmbarkStudios/rust-gpu/issues/550  (target _feature to test)
 // TODO: make CI
 // TODO: read tutorial and make more calls for educational purposes
 // TODO: Some basic kernel should be read loaded and executed
@@ -388,10 +389,10 @@ fn get_shared_buffer(
     unsafe {
         pptr = std::ptr::null_mut();
         device_mem_desc = mem::zeroed();
-        device_mem_desc.flags = _ze_device_mem_alloc_flag_t_ZE_DEVICE_MEM_ALLOC_FLAG_BIAS_CACHED;
+        device_mem_desc.flags = _ze_device_mem_alloc_flag_t_ZE_DEVICE_MEM_ALLOC_FLAG_BIAS_UNCACHED;
         device_mem_desc.ordinal = 0;
         host_mem_desc = mem::zeroed();
-        host_mem_desc.flags = _ze_host_mem_alloc_flag_t_ZE_HOST_MEM_ALLOC_FLAG_BIAS_CACHED;
+        host_mem_desc.flags = _ze_host_mem_alloc_flag_t_ZE_HOST_MEM_ALLOC_FLAG_BIAS_UNCACHED;
 
         result = zeMemAllocShared(
             *context,
@@ -417,7 +418,13 @@ fn get_shader(
     device: &ze_device_handle_t,
 ) -> Result<ze_kernel_handle_t, &'static str> {
     let error_msgs = make_descriptive_error_codes();
-    const COMPUTE_SHADER: &[u8] = include_bytes!(env!("shader.spv"));
+    //TODO: Enable when shader compilation to Kernel works
+    // const COMPUTE_SHADER: &[u8] = include_bytes!(env!("shader.spv"));
+
+    // TODO: proper path not hardocded
+    //const COMPUTE_SHADER: &[u8] = include_bytes!(env!("shader.spv"));
+    const COMPUTE_SHADER: &[u8] =
+        include_bytes!("/home/jczaja/test-l0-rs/shader/matrixMultiply.spv");
 
     let mut moduleDesc: ze_module_desc_t;
     unsafe {
@@ -480,7 +487,7 @@ fn get_shader(
         kernelDesc = mem::zeroed();
         kernel = mem::zeroed();
     }
-    kernelDesc.pKernelName = CString::new("main_cs")
+    kernelDesc.pKernelName = CString::new("mxm")
         .expect("Empty string to c_char error")
         .into_raw(); // Name of the Kernel.
     unsafe {
@@ -519,7 +526,7 @@ fn set_kernel_args(
             log::info!("Level Zero zeKernelSetArgumentValue successful!");
             Ok(())
         }
-        _ => Err("Error: zeKernelSetGroupSize failed!"),
+        _ => Err("Error: zeKernelSetArgumentValue failed!"),
     }
 }
 
@@ -623,6 +630,75 @@ fn dispatch_kernel(
     Ok(())
 }
 
+fn free_command_list_and_queue(
+    queue: &ze_command_queue_handle_t,
+    qlist: &ze_command_list_handle_t,
+) -> Result<(), &'static str> {
+    let error_msgs = make_descriptive_error_codes();
+    let mut result;
+    unsafe {
+        result = zeCommandListDestroy(*qlist);
+    }
+    log::info!("zeCommandListDestroy: {}", error_msgs[&result]);
+
+    match result {
+        _ze_result_t_ZE_RESULT_SUCCESS => log::info!("Level Zero zeCommandListDestroy successful!"),
+        _ => return Err("Error: zeCommandListDestroy failed!"),
+    }
+
+    unsafe {
+        result = zeCommandQueueDestroy(*queue);
+    }
+    log::info!("zeCommandQueueDestroy: {}", error_msgs[&result]);
+
+    match result {
+        _ze_result_t_ZE_RESULT_SUCCESS => {
+            log::info!("Level Zero zeCommandQueueDestroy successful!")
+        }
+        _ => return Err("Error: zeCommandQueueDestroy failed!"),
+    }
+    Ok(())
+}
+
+fn free_context(context: &ze_context_handle_t) -> Result<(), &'static str> {
+    let error_msgs = make_descriptive_error_codes();
+
+    let result;
+    unsafe {
+        result = zeContextDestroy(*context);
+    }
+    log::info!("zeContextDestroy: {}", error_msgs[&result]);
+
+    match result {
+        _ze_result_t_ZE_RESULT_SUCCESS => {
+            log::info!("Level Zero zeContextDestroy successful!");
+            Ok(())
+        }
+        _ => return Err("Error: zeContextDestroy failed!"),
+    }
+}
+
+fn free_buffer(
+    context: &ze_context_handle_t,
+    buffer: &*mut ::std::os::raw::c_void,
+) -> Result<(), &'static str> {
+    let error_msgs = make_descriptive_error_codes();
+
+    let result;
+    unsafe {
+        result = zeMemFree(*context, *buffer);
+    }
+    log::info!("zeMemFree: {}", error_msgs[&result]);
+
+    match result {
+        _ze_result_t_ZE_RESULT_SUCCESS => {
+            log::info!("Level Zero zeMemFree successful!");
+            Ok(())
+        }
+        _ => return Err("Error: zeMemFree failed!"),
+    }
+}
+
 fn main() -> Result<(), &'static str> {
     println!("Hello, Level-Zero world!");
 
@@ -672,8 +748,6 @@ fn main() -> Result<(), &'static str> {
         matrix_size,
     )?;
 
-    //(cmdQueue, std::numeric_limits<uint64_t>::max());
-
     unsafe {
         result = zeCommandQueueSynchronize(queue, u64::MAX);
     }
@@ -684,5 +758,12 @@ fn main() -> Result<(), &'static str> {
         }
         _ => return Err("Error: zeCommandQueueSynchronize failed!"),
     }
+
+    // Clean up
+    free_buffer(&context, &A_matrix)?;
+    free_buffer(&context, &B_matrix)?;
+    free_buffer(&context, &C_matrix)?;
+    free_command_list_and_queue(&queue, &qlist)?;
+    free_context(&context)?;
     Ok(())
 }
