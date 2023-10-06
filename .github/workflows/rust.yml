@@ -25,3 +25,18 @@ jobs:
       run: cargo build --verbose
     - name: Run tests
       run: cargo test --verbose
+
+build-sles:
+
+    runs-on: sles
+
+    steps:
+    - name: Install system dependencies
+      run: |
+        sudo wget https://github.com/oneapi-src/level-zero/releases/download/v1.12.0/level-zero_1.12.0+u22.04_amd64.deb -O $HOME/level-zero.deb && sudo apt-get install -y $HOME/level-zero.deb
+        sudo wget https://github.com/oneapi-src/level-zero/releases/download/v1.12.0/level-zero-devel_1.12.0+u22.04_amd64.deb -O $HOME/level-zero-devel.deb && sudo apt-get install -y $HOME/level-zero-devel.deb
+    - uses: actions/checkout@v3
+    - name: Build
+      run: cargo build --verbose
+    - name: Run tests
+      run: cargo test --verbose
