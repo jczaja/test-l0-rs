@@ -1,6 +1,8 @@
-__kernel void mxm(__global int* a, __global int* b, __global int *c, const int n) {
+__kernel void mxm(__global float* a, __global float* b, __global float *c, const int n) {
 	uint idx = get_global_id(0);
 	uint jdx = get_global_id(1);
+
+  int n2 = get_global_size(0);
 
 	int sum = 0;
 	for (int k = 0; k < n; k++) {

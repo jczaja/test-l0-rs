@@ -2,11 +2,14 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
+use ndarray::prelude::*;
+use ndarray::Array;
 use std::collections::HashMap;
 use std::ffi::CString;
+use std::iter::FromIterator;
 use std::mem;
 
-// TODO: Verify results using some Matrix multiplication CPU crate
+// https://rust-lang-nursery.github.io/rust-cookbook/science/mathematics/linear_algebra.html
 // TODO: https://github.com/EmbarkStudios/rust-gpu/issues/550  (target _feature to test)
 // TODO: make CI
 // TODO: read tutorial and make more calls for educational purposes
@@ -375,9 +378,73 @@ fn get_command_queue(
     }
 }
 
-fn fill_data(mat: &*mut ::std::os::raw::c_void, num_elements: usize) -> Result<(), &'static str> {
-    // TODO:
-    todo!();
+fn zero_data_f32(
+    mat: &*mut ::std::os::raw::c_void,
+    num_elements: usize,
+) -> Result<(), &'static str> {
+    let v;
+    unsafe {
+        let ptr = *mat as *const _ as *mut f32;
+        v = std::slice::from_raw_parts_mut::<f32>(ptr, num_elements);
+    }
+    v.iter_mut().enumerate().for_each(|(_, el)| *el = 0.0f32);
+    Ok(())
+}
+
+fn buffer_to_ndarray(
+    mat: &*mut ::std::os::raw::c_void,
+    matrix_n_dim: usize,
+) -> Result<ndarray::Array2<f32>, &'static str> {
+    let a;
+    let num_elements = matrix_n_dim * matrix_n_dim;
+    unsafe {
+        let ptr = *mat as *const _ as *mut f32;
+        a = std::slice::from_raw_parts_mut::<f32>(ptr, num_elements);
+    }
+    Ok(Array::from_iter(a.iter().cloned())
+        .into_shape((matrix_n_dim, matrix_n_dim))
+        .expect("Could not create first ndarray"))
+}
+
+fn matrix_multiply(
+    mat1: &*mut ::std::os::raw::c_void,
+    mat2: &*mut ::std::os::raw::c_void,
+    matrix_n_dim: usize,
+) -> Result<ndarray::Array2<f32>, &'static str> {
+    let a1;
+    let a2;
+    let num_elements = matrix_n_dim * matrix_n_dim;
+    unsafe {
+        let ptr = *mat1 as *const _ as *mut f32;
+        a1 = std::slice::from_raw_parts_mut::<f32>(ptr, num_elements);
+    }
+    unsafe {
+        let ptr = *mat2 as *const _ as *mut f32;
+        a2 = std::slice::from_raw_parts_mut::<f32>(ptr, num_elements);
+    }
+
+    let a = Array::from_iter(a1.iter().cloned())
+        .into_shape((matrix_n_dim, matrix_n_dim))
+        .expect("Could not create first ndarray");
+    let b = Array::from_iter(a2.iter().cloned())
+        .into_shape((matrix_n_dim, matrix_n_dim))
+        .expect("Could not create second ndarray");
+    let mut c = Array::zeros((matrix_n_dim, matrix_n_dim));
+
+    ndarray::linalg::general_mat_mul(1.0f32, &a, &b, 0.0f32, &mut c);
+    Ok(c)
+}
+
+fn fill_data_f32(
+    mat: &*mut ::std::os::raw::c_void,
+    num_elements: usize,
+) -> Result<(), &'static str> {
+    let v;
+    unsafe {
+        let ptr = *mat as *const _ as *mut f32;
+        v = std::slice::from_raw_parts_mut::<f32>(ptr, num_elements);
+    }
+    v.iter_mut().enumerate().for_each(|(i, el)| *el = i as f32);
     Ok(())
 }
 
@@ -581,12 +648,14 @@ fn dispatch_kernel(
     dst_mat: &*mut ::std::os::raw::c_void,
     src1_mat: &*mut ::std::os::raw::c_void,
     src2_mat: &*mut ::std::os::raw::c_void,
-    mats_size: usize,
+    matrix_n_dim: u32,
 ) -> Result<(), &'static str> {
     let error_msgs = make_descriptive_error_codes();
 
-    let globalSizeX: u32 = 32;
-    let globalSizeY: u32 = 32;
+    let mats_size: usize = matrix_n_dim as usize * matrix_n_dim as usize * 4;
+
+    let globalSizeX: u32 = matrix_n_dim;
+    let globalSizeY: u32 = matrix_n_dim;
     let globalSizeZ: u32 = 1;
     let mut groupSizeX: u32 = 0;
     let mut groupSizeY: u32 = 0;
@@ -630,9 +699,7 @@ fn dispatch_kernel(
     let dst_ptr = dst_mat as *const _ as *mut libc::c_void;
     set_kernel_args(kernel, 2, mats_size, &AnyPointer::C(dst_ptr))?;
 
-    let dim: i32 = mats_size as i32 / 4;
-
-    let dim_ptr = &dim as *const _ as *mut libc::c_void;
+    let dim_ptr = &matrix_n_dim as *const _ as *mut libc::c_void;
     set_kernel_args(
         kernel,
         3,
@@ -641,9 +708,9 @@ fn dispatch_kernel(
     )?;
 
     let dispatch = ze_group_count_t {
-        groupCountX: groupSizeX,
-        groupCountY: groupSizeY,
-        groupCountZ: groupSizeZ,
+        groupCountX: globalSizeX / groupSizeX,
+        groupCountY: globalSizeY / groupSizeY,
+        groupCountZ: globalSizeZ,
     };
     unsafe {
         result = zeCommandListAppendLaunchKernel(
@@ -786,14 +853,16 @@ fn main() -> Result<(), &'static str> {
 
     let (queue, mut qlist) = get_command_queue(&l0_device, &context)?;
 
-    let matrix_n_dim: usize = 100;
+    let matrix_n_dim: usize = 32; // Dim of square matrix
     let matrix_size = matrix_n_dim * matrix_n_dim * 4;
 
     let A_matrix = get_shared_buffer(&context, &l0_device, matrix_size)?;
     let B_matrix = get_shared_buffer(&context, &l0_device, matrix_size)?;
     let C_matrix = get_shared_buffer(&context, &l0_device, matrix_size)?;
 
-    //    fill_data(&A_matrix, matrix_n_dim)?;
+    fill_data_f32(&A_matrix, matrix_n_dim * matrix_n_dim)?;
+    fill_data_f32(&B_matrix, matrix_n_dim * matrix_n_dim)?;
+    zero_data_f32(&C_matrix, matrix_n_dim * matrix_n_dim)?;
 
     let mut kernel = get_kernel(&context, &l0_device)?;
 
@@ -804,7 +873,7 @@ fn main() -> Result<(), &'static str> {
         &C_matrix,
         &A_matrix,
         &B_matrix,
-        matrix_size,
+        matrix_n_dim as u32,
     )?;
 
     unsafe {
@@ -817,6 +886,16 @@ fn main() -> Result<(), &'static str> {
         }
         _ => return Err("Error: zeCommandQueueSynchronize failed!"),
     }
+
+    // Get CPU result..
+    let ref_C_matrix = matrix_multiply(&A_matrix, &B_matrix, matrix_n_dim)?;
+
+    let C_nd_matrix = buffer_to_ndarray(&C_matrix, matrix_n_dim)?;
+    //..and compare with GPU result
+    assert!(
+        C_nd_matrix == ref_C_matrix,
+        "Error: GPU result does not match CPU (reference) result"
+    );
 
     // Clean up
     free_buffer(&context, &A_matrix)?;
