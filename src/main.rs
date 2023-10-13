@@ -2,15 +2,14 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
+use mpi::request::WaitGuard;
+use mpi::traits::*;
 use ndarray::prelude::*;
 use ndarray::Array;
 use std::collections::HashMap;
 use std::ffi::CString;
 use std::iter::FromIterator;
 use std::mem;
-use mpi::request::WaitGuard;
-use mpi::traits::*;
-
 
 // https://rust-lang-nursery.github.io/rust-cookbook/science/mathematics/linear_algebra.html
 // TODO: https://github.com/EmbarkStudios/rust-gpu/issues/550  (target _feature to test)
@@ -408,7 +407,7 @@ fn buffer_to_ndarray(
                 a = std::slice::from_raw_parts_mut::<f32>(ptr, num_elements);
             }
             a
-        },
+        }
         None => panic!("Error: Mat not set"),
     };
     Ok(Array::from_iter(a.iter().cloned())
@@ -432,7 +431,7 @@ fn matrix_multiply(
                 a1 = std::slice::from_raw_parts_mut::<f32>(ptr, num_elements);
             }
             a1
-        },
+        }
         None => panic!("Error: Mat1 not set"),
     };
 
@@ -443,7 +442,7 @@ fn matrix_multiply(
                 a2 = std::slice::from_raw_parts_mut::<f32>(ptr, num_elements);
             }
             a2
-        },
+        }
         None => panic!("Error: Mat2 not set"),
     };
 
@@ -462,7 +461,7 @@ fn matrix_multiply(
 fn fill_data_with_f32(
     mat: &*mut ::std::os::raw::c_void,
     num_elements: usize,
-    elvalue : f32
+    elvalue: f32,
 ) -> Result<(), &'static str> {
     let v;
     unsafe {
@@ -525,7 +524,7 @@ fn get_shared_buffer(
 fn get_kernel(
     context: &ze_context_handle_t,
     device: &ze_device_handle_t,
-    kernel_name: &str
+    kernel_name: &str,
 ) -> Result<ze_kernel_handle_t, &'static str> {
     let error_msgs = make_descriptive_error_codes();
     //TODO: Enable when shader compilation to Kernel works
@@ -680,12 +679,11 @@ fn set_kernel_args(
     }
 }
 
-
-        
 fn dispatch_copy(
     queue: &ze_command_queue_handle_t,
     qlist: &mut ze_command_list_handle_t,
     buf: &Option<*mut ::std::os::raw::c_void>,
+    rank: mpi::Rank,
 ) -> Result<(), &'static str> {
     let error_msgs = make_descriptive_error_codes();
 
@@ -693,13 +691,13 @@ fn dispatch_copy(
         Some(buf) => {
             let buf_ptr = *buf as *const _ as *mut libc::c_void;
             buf_ptr
-        },
+        }
         None => std::ptr::null_mut(),
     };
 
-    let pattern = 1.0f32;
+    let pattern: i32 = rank;
     let pattern_ptr = &pattern as *const _ as *mut libc::c_void;
-    
+
     let mut result;
     unsafe {
         result = zeCommandListAppendMemoryFill(
@@ -744,8 +742,6 @@ fn dispatch_copy(
     }
     Ok(())
 }
-
-
 
 fn dispatch_kernel(
     queue: &ze_command_queue_handle_t,
@@ -805,7 +801,7 @@ fn dispatch_kernel(
             let src1_ptr = mat as *const _ as *mut libc::c_void;
             set_kernel_args(kernel, arg_idx, mats_size, &AnyPointer::C(src1_ptr))?;
             arg_idx += 1;
-        },
+        }
         None => (),
     }
 
@@ -814,17 +810,16 @@ fn dispatch_kernel(
             let src2_ptr = mat as *const _ as *mut libc::c_void;
             set_kernel_args(kernel, arg_idx, mats_size, &AnyPointer::C(src2_ptr))?;
             arg_idx += 1;
-        },
+        }
         None => (),
     }
-
 
     match dst_mat {
         Some(mat) => {
             let dst_ptr = mat as *const _ as *mut libc::c_void;
             set_kernel_args(kernel, arg_idx, mats_size, &AnyPointer::C(dst_ptr))?;
             arg_idx += 1;
-        },
+        }
         None => (),
     }
 
@@ -939,7 +934,6 @@ fn free_buffer(
 
     match buffer {
         Some(buffer) => {
-
             let result;
             unsafe {
                 result = zeMemFree(*context, *buffer);
@@ -953,9 +947,8 @@ fn free_buffer(
                 }
                 _ => return Err("Error: zeMemFree failed!"),
             }
-
-        },
-            None => return Ok(()),
+        }
+        None => return Ok(()),
     }
 }
 
@@ -1005,8 +998,8 @@ fn main() -> Result<(), &'static str> {
     //let kernel_name = "reduce_sum";
     let kernel_name = "fill";
 
-    let (A_matrix, B_matrix, C_matrix)=  match kernel_name {
-         "mxm" => {
+    let (A_matrix, B_matrix, C_matrix) = match kernel_name {
+        "mxm" => {
             let A_matrix = get_shared_buffer(&context, &l0_device, matrix_size)?;
             let B_matrix = get_shared_buffer(&context, &l0_device, matrix_size)?;
             let C_matrix = get_shared_buffer(&context, &l0_device, matrix_size)?;
@@ -1016,9 +1009,8 @@ fn main() -> Result<(), &'static str> {
             fill_data_with_f32(&C_matrix, matrix_n_dim * matrix_n_dim, 0.0f32)?;
 
             (Some(A_matrix), Some(B_matrix), Some(C_matrix))
-        },
+        }
         "reduce_sum" => {
-
             let A_matrix = get_shared_buffer(&context, &l0_device, matrix_size)?;
             let C_matrix = get_shared_buffer(&context, &l0_device, matrix_size)?;
 
@@ -1027,20 +1019,19 @@ fn main() -> Result<(), &'static str> {
 
             //(Some(A_matrix), None, Some(C_matrix))
             (Some(A_matrix), None, Some(C_matrix))
-
-        },
+        }
         "fill" => {
             let A_matrix = get_shared_buffer(&context, &l0_device, 4)?;
             fill_data_with_f32(&A_matrix, 1, 0.0f32)?;
             (Some(A_matrix), None, None)
-        },
+        }
         _ => panic!("Wrong kernel name"),
     };
 
     if kernel_name == "fill" {
-        dispatch_copy(&queue, &mut qlist, &A_matrix)?;
+        dispatch_copy(&queue, &mut qlist, &A_matrix, rank)?;
     } else {
-        let mut kernel = get_kernel(&context, &l0_device,kernel_name)?;
+        let mut kernel = get_kernel(&context, &l0_device, kernel_name)?;
         dispatch_kernel(
             &queue,
             &mut qlist,
@@ -1065,10 +1056,6 @@ fn main() -> Result<(), &'static str> {
 
     // Get CPU result..
 
-
-
-
-
     if kernel_name == "mxm" {
         let ref_C_matrix = matrix_multiply(&A_matrix, &B_matrix, matrix_n_dim)?;
 
@@ -1078,22 +1065,34 @@ fn main() -> Result<(), &'static str> {
             C_nd_matrix == ref_C_matrix,
             "Error: GPU result does not match CPU (reference) result"
         );
-
-    } 
+    }
     let sumbuf;
-    match C_matrix {
+    match A_matrix {
         Some(buf) => {
             unsafe {
-                let ptr = buf as *const _ as *mut f32;
-                sumbuf = std::slice::from_raw_parts_mut::<f32>(ptr, 1);
+                let ptr = buf as *const _ as *mut u32;
+                sumbuf = std::slice::from_raw_parts_mut::<u32>(ptr, 1);
             }
-            log::info!("rank: {rank} sum: {}",sumbuf[0]);
+            log::info!("rank: {rank} My val is: {}", sumbuf[0]);
 
-        }, 
+            // LEts compute a sum
+            let mut sum = 0i32;
+            if rank == 0 {
+                (world).process_at_rank(0).reduce_into_root(
+                    &sumbuf[0],
+                    &mut sum,
+                    mpi::collective::SystemOperation::sum(),
+                );
+            } else {
+                (world)
+                    .process_at_rank(0)
+                    .reduce_into(&sumbuf[0], mpi::collective::SystemOperation::sum());
+            }
+
+            log::info!("{rank}: My sum is : {:?}", sum);
+        }
         None => log::info!("No output buffer"),
     }
-    
-
 
     // Clean up
     free_buffer(&context, &A_matrix)?;
