@@ -8,6 +8,9 @@ use std::collections::HashMap;
 use std::ffi::CString;
 use std::iter::FromIterator;
 use std::mem;
+use mpi::request::WaitGuard;
+use mpi::traits::*;
+
 
 // https://rust-lang-nursery.github.io/rust-cookbook/science/mathematics/linear_algebra.html
 // TODO: https://github.com/EmbarkStudios/rust-gpu/issues/550  (target _feature to test)
@@ -392,36 +395,57 @@ fn zero_data_f32(
 }
 
 fn buffer_to_ndarray(
-    mat: &*mut ::std::os::raw::c_void,
+    mat: &Option<*mut ::std::os::raw::c_void>,
     matrix_n_dim: usize,
 ) -> Result<ndarray::Array2<f32>, &'static str> {
     let a;
     let num_elements = matrix_n_dim * matrix_n_dim;
-    unsafe {
-        let ptr = *mat as *const _ as *mut f32;
-        a = std::slice::from_raw_parts_mut::<f32>(ptr, num_elements);
-    }
+
+    let a = match mat {
+        Some(mat) => {
+            unsafe {
+                let ptr = *mat as *const _ as *mut f32;
+                a = std::slice::from_raw_parts_mut::<f32>(ptr, num_elements);
+            }
+            a
+        },
+        None => panic!("Error: Mat not set"),
+    };
     Ok(Array::from_iter(a.iter().cloned())
         .into_shape((matrix_n_dim, matrix_n_dim))
         .expect("Could not create first ndarray"))
 }
 
 fn matrix_multiply(
-    mat1: &*mut ::std::os::raw::c_void,
-    mat2: &*mut ::std::os::raw::c_void,
+    mat1: &Option<*mut ::std::os::raw::c_void>,
+    mat2: &Option<*mut ::std::os::raw::c_void>,
     matrix_n_dim: usize,
 ) -> Result<ndarray::Array2<f32>, &'static str> {
     let a1;
     let a2;
     let num_elements = matrix_n_dim * matrix_n_dim;
-    unsafe {
-        let ptr = *mat1 as *const _ as *mut f32;
-        a1 = std::slice::from_raw_parts_mut::<f32>(ptr, num_elements);
-    }
-    unsafe {
-        let ptr = *mat2 as *const _ as *mut f32;
-        a2 = std::slice::from_raw_parts_mut::<f32>(ptr, num_elements);
-    }
+
+    let a1 = match mat1 {
+        Some(mat) => {
+            unsafe {
+                let ptr = *mat as *const _ as *mut f32;
+                a1 = std::slice::from_raw_parts_mut::<f32>(ptr, num_elements);
+            }
+            a1
+        },
+        None => panic!("Error: Mat1 not set"),
+    };
+
+    let a2 = match mat2 {
+        Some(mat) => {
+            unsafe {
+                let ptr = *mat as *const _ as *mut f32;
+                a2 = std::slice::from_raw_parts_mut::<f32>(ptr, num_elements);
+            }
+            a2
+        },
+        None => panic!("Error: Mat2 not set"),
+    };
 
     let a = Array::from_iter(a1.iter().cloned())
         .into_shape((matrix_n_dim, matrix_n_dim))
@@ -435,7 +459,21 @@ fn matrix_multiply(
     Ok(c)
 }
 
-fn fill_data_f32(
+fn fill_data_with_f32(
+    mat: &*mut ::std::os::raw::c_void,
+    num_elements: usize,
+    elvalue : f32
+) -> Result<(), &'static str> {
+    let v;
+    unsafe {
+        let ptr = *mat as *const _ as *mut f32;
+        v = std::slice::from_raw_parts_mut::<f32>(ptr, num_elements);
+    }
+    v.iter_mut().enumerate().for_each(|(_, el)| *el = elvalue);
+    Ok(())
+}
+
+fn fill_data_inc_f32(
     mat: &*mut ::std::os::raw::c_void,
     num_elements: usize,
 ) -> Result<(), &'static str> {
@@ -487,6 +525,7 @@ fn get_shared_buffer(
 fn get_kernel(
     context: &ze_context_handle_t,
     device: &ze_device_handle_t,
+    kernel_name: &str
 ) -> Result<ze_kernel_handle_t, &'static str> {
     let error_msgs = make_descriptive_error_codes();
     //TODO: Enable when shader compilation to Kernel works
@@ -556,7 +595,7 @@ fn get_kernel(
         kernelDesc = mem::zeroed();
         kernel = mem::zeroed();
     }
-    kernelDesc.pKernelName = CString::new("mxm")
+    kernelDesc.pKernelName = CString::new(kernel_name)
         .expect("Empty string to c_char error")
         .into_raw(); // Name of the Kernel.
     unsafe {
@@ -641,13 +680,80 @@ fn set_kernel_args(
     }
 }
 
+
+        
+fn dispatch_copy(
+    queue: &ze_command_queue_handle_t,
+    qlist: &mut ze_command_list_handle_t,
+    buf: &Option<*mut ::std::os::raw::c_void>,
+) -> Result<(), &'static str> {
+    let error_msgs = make_descriptive_error_codes();
+
+    let buf_ptr = match buf {
+        Some(buf) => {
+            let buf_ptr = *buf as *const _ as *mut libc::c_void;
+            buf_ptr
+        },
+        None => std::ptr::null_mut(),
+    };
+
+    let pattern = 1.0f32;
+    let pattern_ptr = &pattern as *const _ as *mut libc::c_void;
+    
+    let mut result;
+    unsafe {
+        result = zeCommandListAppendMemoryFill(
+            *qlist,
+            buf_ptr,
+            pattern_ptr,
+            4,
+            4,
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null_mut(),
+        );
+    }
+    log::info!("zeCommandListAppendMemoryFill: {}", error_msgs[&result]);
+    match result {
+        _ze_result_t_ZE_RESULT_SUCCESS => {
+            log::info!("Level Zero zeCommandListAppendMemoryFill successful!")
+        }
+        _ => return Err("Error: zeCommandListAppendMemoryFill failed!"),
+    }
+
+    unsafe {
+        result = zeCommandListClose(*qlist);
+    }
+    log::info!("zeCommandListClose: {}", error_msgs[&result]);
+    match result {
+        _ze_result_t_ZE_RESULT_SUCCESS => {
+            log::info!("Level Zero zeCommandListClose successful!")
+        }
+        _ => return Err("Error: zeCommandListClose failed!"),
+    }
+
+    unsafe {
+        result = zeCommandQueueExecuteCommandLists(*queue, 1, qlist, std::ptr::null_mut());
+    }
+    log::info!("zeCommandQueueExecuteCommandLists: {}", error_msgs[&result]);
+    match result {
+        _ze_result_t_ZE_RESULT_SUCCESS => {
+            log::info!("Level Zero zeCommandQueueExecuteCommandLists successful!")
+        }
+        _ => return Err("Error: zeCommandQueueExecuteCommandLists failed!"),
+    }
+    Ok(())
+}
+
+
+
 fn dispatch_kernel(
     queue: &ze_command_queue_handle_t,
     qlist: &mut ze_command_list_handle_t,
     kernel: &mut ze_kernel_handle_t,
-    dst_mat: &*mut ::std::os::raw::c_void,
-    src1_mat: &*mut ::std::os::raw::c_void,
-    src2_mat: &*mut ::std::os::raw::c_void,
+    dst_mat: &Option<*mut ::std::os::raw::c_void>,
+    src1_mat: &Option<*mut ::std::os::raw::c_void>,
+    src2_mat: &Option<*mut ::std::os::raw::c_void>,
     matrix_n_dim: u32,
 ) -> Result<(), &'static str> {
     let error_msgs = make_descriptive_error_codes();
@@ -692,17 +798,40 @@ fn dispatch_kernel(
         _ => return Err("Error: zeKernelSetGroupSize failed!"),
     }
 
-    let src1_ptr = src1_mat as *const _ as *mut libc::c_void;
-    set_kernel_args(kernel, 0, mats_size, &AnyPointer::C(src1_ptr))?;
-    let src2_ptr = src2_mat as *const _ as *mut libc::c_void;
-    set_kernel_args(kernel, 1, mats_size, &AnyPointer::C(src2_ptr))?;
-    let dst_ptr = dst_mat as *const _ as *mut libc::c_void;
-    set_kernel_args(kernel, 2, mats_size, &AnyPointer::C(dst_ptr))?;
+    let mut arg_idx = 0;
+
+    match src1_mat {
+        Some(mat) => {
+            let src1_ptr = mat as *const _ as *mut libc::c_void;
+            set_kernel_args(kernel, arg_idx, mats_size, &AnyPointer::C(src1_ptr))?;
+            arg_idx += 1;
+        },
+        None => (),
+    }
+
+    match src2_mat {
+        Some(mat) => {
+            let src2_ptr = mat as *const _ as *mut libc::c_void;
+            set_kernel_args(kernel, arg_idx, mats_size, &AnyPointer::C(src2_ptr))?;
+            arg_idx += 1;
+        },
+        None => (),
+    }
+
+
+    match dst_mat {
+        Some(mat) => {
+            let dst_ptr = mat as *const _ as *mut libc::c_void;
+            set_kernel_args(kernel, arg_idx, mats_size, &AnyPointer::C(dst_ptr))?;
+            arg_idx += 1;
+        },
+        None => (),
+    }
 
     let dim_ptr = &matrix_n_dim as *const _ as *mut libc::c_void;
     set_kernel_args(
         kernel,
-        3,
+        arg_idx,
         std::mem::size_of::<i32>(),
         &AnyPointer::C(dim_ptr),
     )?;
@@ -804,33 +933,49 @@ fn free_context(context: &ze_context_handle_t) -> Result<(), &'static str> {
 
 fn free_buffer(
     context: &ze_context_handle_t,
-    buffer: &*mut ::std::os::raw::c_void,
+    buffer: &Option<*mut ::std::os::raw::c_void>,
 ) -> Result<(), &'static str> {
     let error_msgs = make_descriptive_error_codes();
 
-    let result;
-    unsafe {
-        result = zeMemFree(*context, *buffer);
-    }
-    log::info!("zeMemFree: {}", error_msgs[&result]);
+    match buffer {
+        Some(buffer) => {
 
-    match result {
-        _ze_result_t_ZE_RESULT_SUCCESS => {
-            log::info!("Level Zero zeMemFree successful!");
-            Ok(())
-        }
-        _ => return Err("Error: zeMemFree failed!"),
+            let result;
+            unsafe {
+                result = zeMemFree(*context, *buffer);
+            }
+            log::info!("zeMemFree: {}", error_msgs[&result]);
+
+            match result {
+                _ze_result_t_ZE_RESULT_SUCCESS => {
+                    log::info!("Level Zero zeMemFree successful!");
+                    Ok(())
+                }
+                _ => return Err("Error: zeMemFree failed!"),
+            }
+
+        },
+            None => return Ok(()),
     }
 }
 
 fn main() -> Result<(), &'static str> {
-    println!("Hello, Level-Zero world!");
+    println!("Hello, MPI Level-Zero world!");
 
     // Make a default logging level: error
     if std::env::var("RUST_LOG").is_err() {
         std::env::set_var("RUST_LOG", "error")
     }
     simple_logger::SimpleLogger::new().env().init().unwrap();
+
+    let universe = mpi::initialize().unwrap();
+    let world = universe.world();
+    let size = world.size();
+    let rank = world.rank();
+
+    if rank == 0 {
+        log::info!("Size of MPI universe: {size}");
+    }
 
     let error_msgs = make_descriptive_error_codes();
 
@@ -853,28 +998,59 @@ fn main() -> Result<(), &'static str> {
 
     let (queue, mut qlist) = get_command_queue(&l0_device, &context)?;
 
-    let matrix_n_dim: usize = 32; // Dim of square matrix
+    let matrix_n_dim: usize = 128; // Dim of square matrix
     let matrix_size = matrix_n_dim * matrix_n_dim * 4;
 
-    let A_matrix = get_shared_buffer(&context, &l0_device, matrix_size)?;
-    let B_matrix = get_shared_buffer(&context, &l0_device, matrix_size)?;
-    let C_matrix = get_shared_buffer(&context, &l0_device, matrix_size)?;
+    //let kernel_name = "mxm";
+    //let kernel_name = "reduce_sum";
+    let kernel_name = "fill";
 
-    fill_data_f32(&A_matrix, matrix_n_dim * matrix_n_dim)?;
-    fill_data_f32(&B_matrix, matrix_n_dim * matrix_n_dim)?;
-    zero_data_f32(&C_matrix, matrix_n_dim * matrix_n_dim)?;
+    let (A_matrix, B_matrix, C_matrix)=  match kernel_name {
+         "mxm" => {
+            let A_matrix = get_shared_buffer(&context, &l0_device, matrix_size)?;
+            let B_matrix = get_shared_buffer(&context, &l0_device, matrix_size)?;
+            let C_matrix = get_shared_buffer(&context, &l0_device, matrix_size)?;
 
-    let mut kernel = get_kernel(&context, &l0_device)?;
+            fill_data_with_f32(&A_matrix, matrix_n_dim * matrix_n_dim, rank as f32 + 1.0f32)?;
+            fill_data_inc_f32(&B_matrix, matrix_n_dim * matrix_n_dim)?;
+            fill_data_with_f32(&C_matrix, matrix_n_dim * matrix_n_dim, 0.0f32)?;
 
-    dispatch_kernel(
-        &queue,
-        &mut qlist,
-        &mut kernel,
-        &C_matrix,
-        &A_matrix,
-        &B_matrix,
-        matrix_n_dim as u32,
-    )?;
+            (Some(A_matrix), Some(B_matrix), Some(C_matrix))
+        },
+        "reduce_sum" => {
+
+            let A_matrix = get_shared_buffer(&context, &l0_device, matrix_size)?;
+            let C_matrix = get_shared_buffer(&context, &l0_device, matrix_size)?;
+
+            fill_data_with_f32(&A_matrix, matrix_n_dim * matrix_n_dim, rank as f32 + 1.0f32)?;
+            fill_data_with_f32(&C_matrix, matrix_n_dim * matrix_n_dim, 0.0f32)?;
+
+            //(Some(A_matrix), None, Some(C_matrix))
+            (Some(A_matrix), None, Some(C_matrix))
+
+        },
+        "fill" => {
+            let A_matrix = get_shared_buffer(&context, &l0_device, 4)?;
+            fill_data_with_f32(&A_matrix, 1, 0.0f32)?;
+            (Some(A_matrix), None, None)
+        },
+        _ => panic!("Wrong kernel name"),
+    };
+
+    if kernel_name == "fill" {
+        dispatch_copy(&queue, &mut qlist, &A_matrix)?;
+    } else {
+        let mut kernel = get_kernel(&context, &l0_device,kernel_name)?;
+        dispatch_kernel(
+            &queue,
+            &mut qlist,
+            &mut kernel,
+            &C_matrix,
+            &A_matrix,
+            &B_matrix,
+            matrix_n_dim as u32,
+        )?;
+    }
 
     unsafe {
         result = zeCommandQueueSynchronize(queue, u64::MAX);
@@ -888,14 +1064,36 @@ fn main() -> Result<(), &'static str> {
     }
 
     // Get CPU result..
-    let ref_C_matrix = matrix_multiply(&A_matrix, &B_matrix, matrix_n_dim)?;
 
-    let C_nd_matrix = buffer_to_ndarray(&C_matrix, matrix_n_dim)?;
-    //..and compare with GPU result
-    assert!(
-        C_nd_matrix == ref_C_matrix,
-        "Error: GPU result does not match CPU (reference) result"
-    );
+
+
+
+
+    if kernel_name == "mxm" {
+        let ref_C_matrix = matrix_multiply(&A_matrix, &B_matrix, matrix_n_dim)?;
+
+        let C_nd_matrix = buffer_to_ndarray(&C_matrix, matrix_n_dim)?;
+        //..and compare with GPU result
+        assert!(
+            C_nd_matrix == ref_C_matrix,
+            "Error: GPU result does not match CPU (reference) result"
+        );
+
+    } 
+    let sumbuf;
+    match C_matrix {
+        Some(buf) => {
+            unsafe {
+                let ptr = buf as *const _ as *mut f32;
+                sumbuf = std::slice::from_raw_parts_mut::<f32>(ptr, 1);
+            }
+            log::info!("rank: {rank} sum: {}",sumbuf[0]);
+
+        }, 
+        None => log::info!("No output buffer"),
+    }
+    
+
 
     // Clean up
     free_buffer(&context, &A_matrix)?;
