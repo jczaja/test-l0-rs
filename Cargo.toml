@@ -25,3 +25,4 @@ libc = "0.2.148"
 ndarray = "0.15.6"
 mpi = { version = "0.6", features = ["user-operations", "derive"] }
 rand = "0.8.5"
+clap = { version = "4.4.6", features = ["derive"] }

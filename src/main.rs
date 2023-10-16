@@ -11,10 +11,22 @@ use std::ffi::CString;
 use std::iter::FromIterator;
 use std::mem;
 
+// let's make device memory allocation
 // https://rust-lang-nursery.github.io/rust-cookbook/science/mathematics/linear_algebra.html
 // TODO: https://github.com/EmbarkStudios/rust-gpu/issues/550  (target _feature to test)
 // TODO: make CI
 // TODO: read tutorial and make more calls for educational purposes
+
+use clap::Parser;
+
+/// Simple program to greet a person
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// Name of the person to greet
+    #[arg(short, long, default_value_t = format!("shared"))]
+    memory: String,
+}
 
 include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 
@@ -483,6 +495,38 @@ fn fill_data_inc_f32(
     }
     v.iter_mut().enumerate().for_each(|(i, el)| *el = i as f32);
     Ok(())
+}
+
+fn get_device_buffer(
+    context: &ze_context_handle_t,
+    device: &ze_device_handle_t,
+    allocsize: usize,
+) -> Result<*mut ::std::os::raw::c_void, &'static str> {
+    let error_msgs = make_descriptive_error_codes();
+    let mut device_mem_desc: ze_device_mem_alloc_desc_t;
+    let mut pptr: *mut ::std::os::raw::c_void;
+    let result;
+    unsafe {
+        pptr = std::ptr::null_mut();
+        device_mem_desc = mem::zeroed();
+        device_mem_desc.stype = _ze_structure_type_t_ZE_STRUCTURE_TYPE_DEVICE_MEM_ALLOC_DESC;
+
+        result = zeMemAllocDevice(
+            *context,
+            &device_mem_desc,
+            allocsize,
+            4096,
+            *device,
+            &mut pptr,
+        );
+    }
+
+    log::info!("zeMemAllocDevice: {}", error_msgs[&result]);
+
+    match result {
+        _ze_result_t_ZE_RESULT_SUCCESS => Ok(pptr),
+        _ => return Err("Error: zeMemAllocDevice failed!"),
+    }
 }
 
 fn get_shared_buffer(
@@ -961,6 +1005,8 @@ fn main() -> Result<(), &'static str> {
     }
     simple_logger::SimpleLogger::new().env().init().unwrap();
 
+    let args = Args::parse();
+
     let universe = mpi::initialize().unwrap();
     let world = universe.world();
     let size = world.size();
@@ -998,6 +1044,8 @@ fn main() -> Result<(), &'static str> {
     //let kernel_name = "reduce_sum";
     let kernel_name = "fill";
 
+    let args = Args::parse();
+
     let (A_matrix, B_matrix, C_matrix) = match kernel_name {
         "mxm" => {
             let A_matrix = get_shared_buffer(&context, &l0_device, matrix_size)?;
@@ -1021,8 +1069,18 @@ fn main() -> Result<(), &'static str> {
             (Some(A_matrix), None, Some(C_matrix))
         }
         "fill" => {
-            let A_matrix = get_shared_buffer(&context, &l0_device, 4)?;
-            fill_data_with_f32(&A_matrix, 1, 0.0f32)?;
+            let A_matrix = match args.memory.as_ref() {
+                "shared" => {
+                    let x = get_shared_buffer(&context, &l0_device, 4)?;
+                    fill_data_with_f32(&x, 1, 0.0f32)?;
+                    x
+                }
+                "device" => get_device_buffer(&context, &l0_device, 4)?,
+                _ => {
+                    panic!("Error: wrong value of argument memory")
+                }
+            };
+
             (Some(A_matrix), None, None)
         }
         _ => panic!("Wrong kernel name"),
