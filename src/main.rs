@@ -28,7 +28,7 @@ struct Args {
     memory: String,
 }
 
-include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
+include!(concat!(env!("CARGO_MANIFEST_DIR"), "/cpp/bindings.rs"));
 
 fn make_descriptive_error_codes() -> HashMap<_ze_result_t, &'static str> {
     let mut error_codes: HashMap<_ze_result_t, &str> = HashMap::default();
